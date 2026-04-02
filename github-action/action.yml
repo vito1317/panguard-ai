@@ -1,5 +1,5 @@
 name: 'PanGuard MCP Skill Audit'
-description: 'Automatically audit MCP skills in PRs for security threats'
+description: 'Comprehensive security audit for MCP skills with GitHub integration, SARIF support, and detailed reporting'
 branding:
   icon: 'shield'
   color: 'green'
@@ -17,6 +17,22 @@ inputs:
     description: 'Additional arguments to pass to panguard-guard scan'
     required: false
     default: ''
+  severity-threshold:
+    description: 'Minimum severity level to report (LOW, MEDIUM, HIGH, CRITICAL)'
+    required: false
+    default: 'HIGH'
+  max-findings:
+    description: 'Maximum number of findings to display in reports'
+    required: false
+    default: '50'
+  sarif-output:
+    description: 'Generate and upload SARIF report to GitHub Code Scanning'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for uploading SARIF results (uses github.token if not provided)'
+    required: false
+    default: ''
 
 outputs:
   highest-risk:
@@ -28,6 +44,12 @@ outputs:
   report-json:
     description: 'Full scan report as JSON'
     value: ${{ steps.scan.outputs.report-json }}
+  sarif-file:
+    description: 'Path to generated SARIF report (if enabled)'
+    value: ${{ steps.convert-sarif.outputs.sarif-file }}
+  scan-status:
+    description: 'Overall scan status (PASSED, WARNING, FAILED)'
+    value: ${{ steps.scan.outputs.scan-status }}
 
 runs:
   using: 'composite'
@@ -80,6 +102,7 @@ runs:
           echo "highest-risk=ERROR" >> "$GITHUB_OUTPUT"
           echo "total-findings=0" >> "$GITHUB_OUTPUT"
           echo "report-json={}" >> "$GITHUB_OUTPUT"
+          echo "scan-status=ERROR" >> "$GITHUB_OUTPUT"
           echo "Scan produced invalid output. Exit code: $EXIT_CODE"
           exit 0
         fi
@@ -87,12 +110,186 @@ runs:
         HIGHEST=$(echo "$REPORT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('highestRisk','CLEAN'))")
         TOTAL=$(echo "$REPORT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(sum(len(s.get('findings',[])) for s in d.get('skills',[])))")
 
+        # Determine scan status
+        if [ "$HIGHEST" = "CRITICAL" ] || [ "$HIGHEST" = "HIGH" ]; then
+          SCAN_STATUS="FAILED"
+        elif [ "$HIGHEST" = "MEDIUM" ]; then
+          SCAN_STATUS="WARNING"
+        else
+          SCAN_STATUS="PASSED"
+        fi
+
         echo "highest-risk=$HIGHEST" >> "$GITHUB_OUTPUT"
         echo "total-findings=$TOTAL" >> "$GITHUB_OUTPUT"
+        echo "scan-status=$SCAN_STATUS" >> "$GITHUB_OUTPUT"
 
         # Store report as file (too large for output variable)
         echo "$REPORT" > /tmp/panguard-scan-report.json
         echo "report-json=/tmp/panguard-scan-report.json" >> "$GITHUB_OUTPUT"
+
+    - name: Create job summary
+      if: steps.scan.outputs.highest-risk != ''
+      shell: bash
+      env:
+        HIGHEST_RISK: ${{ steps.scan.outputs.highest-risk }}
+        TOTAL_FINDINGS: ${{ steps.scan.outputs.total-findings }}
+        SCAN_STATUS: ${{ steps.scan.outputs.scan-status }}
+      run: |
+        REPORT=$(cat /tmp/panguard-scan-report.json 2>/dev/null || echo "{}")
+
+        # Status badge emoji
+        case "$SCAN_STATUS" in
+          PASSED) BADGE="✅ PASSED" ;;
+          WARNING) BADGE="⚠️ WARNING" ;;
+          FAILED) BADGE="❌ FAILED" ;;
+          *) BADGE="❓ UNKNOWN" ;;
+        esac
+
+        # Build summary table
+        SUMMARY_TABLE=$(echo "$REPORT" | python3 << 'PYTHON_SCRIPT'
+        import json, sys
+        try:
+          d = json.load(sys.stdin)
+          print("| Skill | Risk Level | Findings | Status |")
+          print("|-------|-----------|----------|--------|")
+          for s in d.get('skills', []):
+            if s.get('status') == 'skipped':
+              continue
+            risk = s.get('riskLevel', 'LOW')
+            name = s.get('name', 'unknown')
+            findings = len(s.get('findings', []))
+            status = s.get('status', 'scanned')
+
+            # Add emoji for risk level
+            if risk == 'CRITICAL':
+              risk_display = '🔴 CRITICAL'
+            elif risk == 'HIGH':
+              risk_display = '🟠 HIGH'
+            elif risk == 'MEDIUM':
+              risk_display = '🟡 MEDIUM'
+            else:
+              risk_display = '🟢 LOW'
+
+            print(f"| {name} | {risk_display} | {findings} | {status} |")
+
+          if not d.get('skills'):
+            print("| No skills found | -- | -- | -- |")
+        except Exception as e:
+          print(f"| Error parsing report | -- | -- | -- |")
+        PYTHON_SCRIPT
+        )
+
+        # Write to GITHUB_STEP_SUMMARY
+        {
+          echo "# PanGuard MCP Skill Audit Report"
+          echo ""
+          echo "## Status: $BADGE"
+          echo ""
+          echo "**Highest Risk:** $HIGHEST_RISK | **Total Findings:** $TOTAL_FINDINGS"
+          echo ""
+          echo "## Detailed Results"
+          echo ""
+          echo "$SUMMARY_TABLE"
+          echo ""
+          echo "## Documentation"
+          echo "For more information, visit [PanGuard Documentation](https://docs.panguard.ai)"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Generate annotations
+      if: steps.scan.outputs.highest-risk != '' && steps.scan.outputs.highest-risk != 'CLEAN'
+      shell: bash
+      env:
+        MAX_FINDINGS: ${{ inputs.max-findings }}
+        SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+      run: |
+        REPORT=$(cat /tmp/panguard-scan-report.json 2>/dev/null || echo "{}")
+
+        # Convert severity threshold to numeric priority (higher = more severe)
+        case "$SEVERITY_THRESHOLD" in
+          CRITICAL) MIN_PRIORITY=4 ;;
+          HIGH) MIN_PRIORITY=3 ;;
+          MEDIUM) MIN_PRIORITY=2 ;;
+          LOW) MIN_PRIORITY=1 ;;
+          *) MIN_PRIORITY=1 ;;
+        esac
+
+        echo "$REPORT" | python3 << PYTHON_SCRIPT
+        import json, sys, os
+
+        try:
+          d = json.load(sys.stdin)
+          count = 0
+          max_findings = int(os.environ.get('MAX_FINDINGS', 50))
+
+          for skill in d.get('skills', []):
+            for finding in skill.get('findings', []):
+              if count >= max_findings:
+                break
+
+              severity = finding.get('severity', 'LOW')
+
+              # Map severity to level (1=LOW, 2=MEDIUM, 3=HIGH, 4=CRITICAL)
+              severity_map = {'LOW': 1, 'MEDIUM': 2, 'HIGH': 3, 'CRITICAL': 4}
+              severity_level = severity_map.get(severity, 1)
+              min_priority = int(os.environ.get('MIN_PRIORITY', 1))
+
+              if severity_level < min_priority:
+                continue
+
+              # Determine annotation level
+              if severity in ('CRITICAL', 'HIGH'):
+                ann_level = 'error'
+              elif severity == 'MEDIUM':
+                ann_level = 'warning'
+              else:
+                ann_level = 'notice'
+
+              title = finding.get('title', 'Security Finding')
+              description = finding.get('description', 'No description')
+              skill_name = skill.get('name', 'unknown')
+              file = finding.get('file', 'SKILL.md')
+              line = finding.get('line', 1)
+
+              print(f"::{ann_level} file={file},line={line},title={title}::[{skill_name}] {description}")
+              count += 1
+        except:
+          pass
+        PYTHON_SCRIPT
+
+    - name: Convert to SARIF
+      id: convert-sarif
+      if: inputs.sarif-output == 'true' && steps.scan.outputs.highest-risk != ''
+      shell: bash
+      env:
+        REPORT_PATH: /tmp/panguard-scan-report.json
+      run: |
+        # Check if sarif-converter.py exists in action directory
+        CONVERTER="${{ github.action_path }}/sarif-converter.py"
+
+        if [ ! -f "$CONVERTER" ]; then
+          echo "SARIF converter not found at $CONVERTER"
+          echo "sarif-file=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        SARIF_FILE="/tmp/panguard-scan-report.sarif"
+        python3 "$CONVERTER" "$REPORT_PATH" "$SARIF_FILE"
+
+        if [ -f "$SARIF_FILE" ]; then
+          echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
+          echo "SARIF report generated at $SARIF_FILE"
+        else
+          echo "Failed to generate SARIF report"
+          echo "sarif-file=" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload SARIF to Code Scanning
+      if: inputs.sarif-output == 'true' && steps.convert-sarif.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.convert-sarif.outputs.sarif-file }}
+        category: 'panguard-mcp-audit'
+        wait-for-processing: false
 
     - name: Comment on PR
       if: |
@@ -105,6 +302,7 @@ runs:
         GH_TOKEN: ${{ github.token }}
         HIGHEST_RISK: ${{ steps.scan.outputs.highest-risk }}
         TOTAL_FINDINGS: ${{ steps.scan.outputs.total-findings }}
+        MAX_FINDINGS: ${{ inputs.max-findings }}
       run: |
         REPORT=$(cat /tmp/panguard-scan-report.json 2>/dev/null || echo "{}")
 
@@ -112,39 +310,75 @@ runs:
         if [ "$HIGHEST_RISK" = "CLEAN" ] || [ "$HIGHEST_RISK" = "LOW" ]; then
           ICON="white_check_mark"
           STATUS="All Clear"
+          BADGE="✅"
         elif [ "$HIGHEST_RISK" = "MEDIUM" ]; then
           ICON="warning"
           STATUS="Concerns Found"
+          BADGE="⚠️"
         else
           ICON="rotating_light"
           STATUS="Threats Detected"
+          BADGE="🔴"
         fi
 
-        # Extract skill-level summary from JSON
-        SKILL_SUMMARY=$(echo "$REPORT" | python3 -c "
+        # Extract skill-level summary from JSON with collapsible details
+        SKILL_DETAILS=$(echo "$REPORT" | python3 << 'PYTHON_SCRIPT'
         import json, sys
+
         try:
           d = json.load(sys.stdin)
-          lines = []
+          details = []
+
           for s in d.get('skills', []):
             if s.get('status') == 'skipped':
               continue
+
             risk = s.get('riskLevel', 'LOW')
             name = s.get('name', 'unknown')
-            findings = len(s.get('findings', []))
-            if risk in ('HIGH', 'CRITICAL'):
-              lines.append(f'| {name} | **{risk}** | {findings} |')
-            elif risk == 'MEDIUM':
-              lines.append(f'| {name} | {risk} | {findings} |')
-            else:
-              lines.append(f'| {name} | {risk} | {findings} |')
-          print('\n'.join(lines) if lines else '| No skills found | -- | -- |')
-        except:
-          print('| Parse error | -- | -- |')
-        " 2>/dev/null || echo "| Error | -- | -- |")
+            findings = s.get('findings', [])
+            findings_count = len(findings)
 
-        # Sanitize for Markdown injection
-        SKILL_SUMMARY=$(echo "$SKILL_SUMMARY" | sed 's/`//g; s/<[^>]*>//g; s/|/\\|/g' | tr -d '\n\r')
+            # Risk emoji
+            if risk == 'CRITICAL':
+              risk_badge = '🔴'
+            elif risk == 'HIGH':
+              risk_badge = '🟠'
+            elif risk == 'MEDIUM':
+              risk_badge = '🟡'
+            else:
+              risk_badge = '🟢'
+
+            # Skill summary line
+            summary = f"{risk_badge} **{name}** — {risk} ({findings_count} findings)"
+
+            # Add collapsible section if there are findings
+            if findings_count > 0:
+              details.append(f"<details><summary>{summary}</summary>")
+              details.append("")
+
+              for finding in findings[:10]:  # Limit to 10 per skill
+                ftitle = finding.get('title', 'Finding')
+                fdesc = finding.get('description', '')
+                fsev = finding.get('severity', 'UNKNOWN')
+                details.append(f"- **{ftitle}** ({fsev})")
+                if fdesc:
+                  details.append(f"  {fdesc}")
+
+              if findings_count > 10:
+                details.append(f"- ... and {findings_count - 10} more findings")
+
+              details.append("")
+              details.append("</details>")
+            else:
+              details.append(summary)
+
+            details.append("")
+
+          print('\n'.join(details) if details else "No skills audited")
+        except:
+          print("Error parsing audit results")
+        PYTHON_SCRIPT
+        )
 
         # Allowlist risk level and findings count
         case "$HIGHEST_RISK" in
@@ -157,16 +391,19 @@ runs:
 
         BODY=$(cat <<HEREDOC
         ${MARKER}
-        ## :${ICON}: PanGuard MCP Skill Audit — ${STATUS}
+        ## ${BADGE} PanGuard MCP Skill Audit — ${STATUS}
 
-        | Skill | Risk Level | Findings |
-        |-------|-----------|----------|
-        ${SKILL_SUMMARY}
+        **Highest Risk:** \`${HIGHEST_RISK}\` | **Total Findings:** \`${TOTAL_FINDINGS}\`
 
-        **Highest Risk:** ${HIGHEST_RISK} | **Total Findings:** ${TOTAL_FINDINGS}
+        ### Audit Results
+
+        ${SKILL_DETAILS}
 
         ---
-        <sub>Powered by <a href="https://panguard.ai">PanGuard</a> | <a href="https://github.com/panguard-ai/panguard-ai">Source</a></sub>
+
+        **Learn More:** [PanGuard Documentation](https://docs.panguard.ai) | [GitHub Repository](https://github.com/panguard-ai/panguard-guard)
+
+        <sub>Powered by [PanGuard](https://panguard.ai)</sub>
         HEREDOC
         )
 

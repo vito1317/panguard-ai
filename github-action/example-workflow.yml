@@ -1,7 +1,9 @@
-# .github/workflows/panguard-skill-audit.yml
-#
-# Automatically audit MCP skills when PRs modify MCP config files.
-# Add this file to your repository's .github/workflows/ directory.
+# Example workflows for PanGuard GitHub Action
+# This file contains multiple workflow examples showing different configurations and use cases.
+
+# ============================================================================
+# BASIC USAGE: Simple PR audit triggered on MCP config changes
+# ============================================================================
 
 name: PanGuard Skill Audit
 
@@ -32,7 +34,386 @@ jobs:
         with:
           node-version: '20'
 
-      - uses: panguard-ai/panguard-ai/github-action@main
+      - uses: panguard-ai/panguard-guard/github-action@main
         with:
           fail-on-high: 'true'
           comment-on-pr: 'true'
+
+
+# ============================================================================
+# ADVANCED USAGE: Full-featured audit with SARIF and detailed reporting
+# ============================================================================
+
+name: PanGuard Advanced Audit
+
+on:
+  pull_request:
+    paths:
+      - '**/claude_desktop_config.json'
+      - '**/.cursor/mcp.json'
+      - '**/mcp.json'
+      - '**/.mcp.json'
+      - '**/.windsurf/mcp.json'
+      - '**/.cline/mcp_settings.json'
+      - '**/SKILL.md'
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+
+jobs:
+  advanced-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run PanGuard audit with SARIF
+        uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'true'
+          comment-on-pr: 'true'
+          severity-threshold: 'MEDIUM'
+          max-findings: '100'
+          sarif-output: 'true'
+          scan-args: '--verbose'
+
+      - name: Display job summary
+        if: always()
+        run: |
+          echo "Audit complete. Check the Job Summary tab for detailed results."
+          echo "Code Scanning results are available in the Security tab (if SARIF upload enabled)."
+
+
+# ============================================================================
+# SCHEDULED SCANNING: Daily audit of all MCP skills in repository
+# ============================================================================
+
+name: PanGuard Scheduled Scan
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+
+jobs:
+  scheduled-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'false'
+          comment-on-pr: 'false'
+          severity-threshold: 'LOW'
+          max-findings: '50'
+          sarif-output: 'true'
+
+      - name: Create issue if findings detected
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'PanGuard: Security findings detected in scheduled scan',
+              body: 'A scheduled MCP skill audit has detected security findings. Please review the latest audit results.',
+              labels: ['security', 'panguard']
+            })
+
+
+# ============================================================================
+# MATRIX STRATEGY: Audit multiple configurations or MCP clients
+# ============================================================================
+
+name: PanGuard Matrix Scan
+
+on:
+  pull_request:
+    paths:
+      - '**/claude_desktop_config.json'
+      - '**/.cursor/mcp.json'
+      - '**/mcp.json'
+      - '**/.mcp.json'
+      - '**/.windsurf/mcp.json'
+      - '**/.cline/mcp_settings.json'
+      - '**/SKILL.md'
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+
+jobs:
+  matrix-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        client: [claude, cursor, windsurf, cline]
+        include:
+          - client: claude
+            config-path: 'claude_desktop_config.json'
+          - client: cursor
+            config-path: '.cursor/mcp.json'
+          - client: windsurf
+            config-path: '.windsurf/mcp.json'
+          - client: cline
+            config-path: '.cline/mcp_settings.json'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check if config exists
+        id: check-config
+        run: |
+          if [ -f "${{ matrix.config-path }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Audit ${{ matrix.client }} configuration
+        if: steps.check-config.outputs.exists == 'true'
+        uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'true'
+          comment-on-pr: 'true'
+          severity-threshold: 'HIGH'
+          max-findings: '50'
+          sarif-output: 'true'
+          scan-args: '--config ${{ matrix.config-path }}'
+
+
+# ============================================================================
+# USING OUTPUTS: Subsequent steps based on audit results
+# ============================================================================
+
+name: PanGuard with Outputs
+
+on:
+  pull_request:
+    paths:
+      - '**/claude_desktop_config.json'
+      - '**/.cursor/mcp.json'
+      - '**/mcp.json'
+      - '**/.mcp.json'
+      - '**/.windsurf/mcp.json'
+      - '**/.cline/mcp_settings.json'
+      - '**/SKILL.md'
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+
+jobs:
+  audit-with-outputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run audit
+        id: panguard
+        uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'false'
+          comment-on-pr: 'true'
+          severity-threshold: 'MEDIUM'
+          max-findings: '50'
+          sarif-output: 'true'
+
+      - name: Handle CRITICAL findings
+        if: steps.panguard.outputs.highest-risk == 'CRITICAL'
+        run: |
+          echo "CRITICAL security issues detected!"
+          echo "Findings: ${{ steps.panguard.outputs.total-findings }}"
+          exit 1
+
+      - name: Handle HIGH findings
+        if: steps.panguard.outputs.highest-risk == 'HIGH'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'HIGH severity security findings require review before merge.'
+            })
+
+      - name: Report passing audit
+        if: steps.panguard.outputs.scan-status == 'PASSED'
+        run: |
+          echo "✅ All MCP skills passed security audit"
+          echo "Risk Level: ${{ steps.panguard.outputs.highest-risk }}"
+          echo "Total Findings: ${{ steps.panguard.outputs.total-findings }}"
+
+      - name: Upload detailed report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: panguard-reports
+          path: |
+            /tmp/panguard-scan-report.json
+            /tmp/panguard-scan-report.sarif
+          retention-days: 30
+
+
+# ============================================================================
+# CONDITIONAL ENFORCEMENT: Different rules for different branches
+# ============================================================================
+
+name: PanGuard Conditional
+
+on:
+  pull_request:
+    paths:
+      - '**/claude_desktop_config.json'
+      - '**/.cursor/mcp.json'
+      - '**/mcp.json'
+      - '**/.mcp.json'
+      - '**/.windsurf/mcp.json'
+      - '**/.cline/mcp_settings.json'
+      - '**/SKILL.md'
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+
+jobs:
+  conditional-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run strict audit for main branch PRs
+        if: github.base_ref == 'main'
+        uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'true'
+          comment-on-pr: 'true'
+          severity-threshold: 'MEDIUM'
+          max-findings: '100'
+          sarif-output: 'true'
+
+      - name: Run standard audit for develop branch PRs
+        if: github.base_ref == 'develop'
+        uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'false'
+          comment-on-pr: 'true'
+          severity-threshold: 'HIGH'
+          max-findings: '50'
+          sarif-output: 'false'
+
+
+# ============================================================================
+# INTEGRATION WITH OTHER TOOLS: Combined with other security checks
+# ============================================================================
+
+name: PanGuard Security Suite
+
+on:
+  pull_request:
+    paths:
+      - '**/claude_desktop_config.json'
+      - '**/.cursor/mcp.json'
+      - '**/mcp.json'
+      - '**/.mcp.json'
+      - '**/.windsurf/mcp.json'
+      - '**/.cline/mcp_settings.json'
+      - '**/SKILL.md'
+      - '**/*.py'
+      - '**/*.js'
+      - '**/*.ts'
+
+permissions:
+  pull-requests: write
+  contents: read
+  security-events: write
+
+jobs:
+  security-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run PanGuard MCP skill audit
+        id: panguard
+        uses: panguard-ai/panguard-guard/github-action@main
+        with:
+          fail-on-high: 'false'
+          comment-on-pr: 'true'
+          severity-threshold: 'MEDIUM'
+          sarif-output: 'true'
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload SARIF results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy'
+
+      - name: Generate security summary
+        if: always()
+        run: |
+          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### PanGuard MCP Audit" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: ${{ steps.panguard.outputs.scan-status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Highest Risk: ${{ steps.panguard.outputs.highest-risk }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Total Findings: ${{ steps.panguard.outputs.total-findings }}" >> $GITHUB_STEP_SUMMARY

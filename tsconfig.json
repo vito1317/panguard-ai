@@ -34,11 +34,14 @@
       "@panguard-ai/panguard-mcp": ["./packages/panguard-mcp/src"],
       "@panguard-ai/panguard-skill-auditor": ["./packages/panguard-skill-auditor/src"],
       "@panguard-ai/threat-cloud": ["./packages/threat-cloud/src"],
-      "@panguard-ai/scan-core": ["./packages/scan-core/src"]
+      "@panguard-ai/scan-core": ["./packages/scan-core/src"],
+      "@panguard-ai/panguard-api": ["./packages/panguard-api/src"],
+      "@panguard-ai/atr": ["./packages/atr/src"]
     }
   },
   "references": [
     { "path": "./packages/scan-core" },
+    { "path": "./packages/atr" },
     { "path": "./packages/core" },
     { "path": "./packages/panguard-scan" },
     { "path": "./packages/panguard-guard" },
@@ -50,7 +53,8 @@
     { "path": "./packages/panguard-mcp" },
     { "path": "./security-hardening" },
     { "path": "./packages/panguard-skill-auditor" },
-    { "path": "./packages/threat-cloud" }
+    { "path": "./packages/threat-cloud" },
+    { "path": "./packages/panguard-api" }
   ],
   "include": [],
   "exclude": ["node_modules", "dist"]

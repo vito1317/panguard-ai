@@ -7,6 +7,11 @@
 // Main entry point
 export { scanContent } from './scanner.js';
 
+// Caching & performance
+export { LRUCache } from './cache.js';
+export { createCachedScanner } from './cached-scanner.js';
+export { getCompiledRules, loadCompiledRules, clearCompiledRulesCache } from './lazy-loader.js';
+
 // Types
 export type {
   Severity,

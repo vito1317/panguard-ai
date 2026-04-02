@@ -1,0 +1,106 @@
+{
+  "name": "panguard-ai",
+  "displayName": "PanGuard AI - MCP Skill Security Scanner",
+  "description": "Real-time security scanning for MCP skills. Detects prompt injection, data exfiltration, and 71+ threat patterns.",
+  "version": "0.1.0",
+  "publisher": "panguard-ai",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/panguard-ai/panguard-ai"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "mcp",
+    "security",
+    "ai",
+    "agent",
+    "skill",
+    "scan",
+    "panguard"
+  ],
+  "icon": "assets/icon.png",
+  "activationEvents": [
+    "onLanguage:markdown",
+    "workspaceContains:**/SKILL.md",
+    "workspaceContains:**/mcp.json",
+    "workspaceContains:**/claude_desktop_config.json"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "panguard.scanFile",
+        "title": "PanGuard: Scan Current File"
+      },
+      {
+        "command": "panguard.scanWorkspace",
+        "title": "PanGuard: Scan All Skills in Workspace"
+      },
+      {
+        "command": "panguard.showDashboard",
+        "title": "PanGuard: Show Security Dashboard"
+      }
+    ],
+    "configuration": {
+      "title": "PanGuard AI",
+      "properties": {
+        "panguard.autoScan": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-scan SKILL.md files on save"
+        },
+        "panguard.severityThreshold": {
+          "type": "string",
+          "default": "medium",
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "description": "Minimum severity to show diagnostics"
+        },
+        "panguard.showInlineHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline security hints"
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "skill-md",
+        "aliases": [
+          "SKILL.md"
+        ],
+        "filenames": [
+          "SKILL.md"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "npm run build -- --watch",
+    "package": "vsce package",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^22.14.0",
+    "esbuild": "^0.21.0",
+    "typescript": "~5.7.3"
+  },
+  "dependencies": {
+    "@panguard-ai/scan-core": "workspace:*",
+    "@panguard-ai/atr": "workspace:*"
+  }
+}

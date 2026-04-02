@@ -19,6 +19,19 @@ export type {
   LogEntry,
 } from './types.js';
 
+// Error types / 錯誤型別
+export {
+  PanguardError, ScanError, ValidationError, AuthError, RateLimitError, ConfigError,
+  isPanguardError, errorMessage,
+} from './errors.js';
+export type { ErrorCode } from './errors.js';
+
+// Result type / 結果型別
+export {
+  ok, err, isOk, isErr, unwrap, mapResult, mapError, flatMap, tryCatch, getOrElse, toOption,
+} from './result.js';
+export type { Result } from './result.js';
+
 // i18n / 國際化
 export { initI18n, getI18n, changeLanguage, t, resetI18n } from './i18n/index.js';
 
